@@ -1,0 +1,291 @@
+---
+title: "HW1"
+author: "Jessica Liu"
+output: html_document
+---
+
+## Problem 3a
+
+```{r}
+my_data <- read.table('../../Downloads/heightWeightData.txt', sep = ",")
+colnames(my_data) <- c('gender','height','weight')
+my_data$gender <- as.factor(my_data$gender)
+females <- my_data[my_data$gender == 2, ]
+females <- subset(females, select=-gender)
+# fit a 2-dimensional gaussian to females data
+set.seed(5)
+library('MASS')
+Empirical_Covariance <- var(females)
+Empirical_Mean <- colMeans(females)
+fit <- mvrnorm(n = 1000, Empirical_Mean, Empirical_Covariance, empirical = TRUE)
+# plot fit and data points
+library(ggplot2)
+
+# the ellipse package's ellipse command outlines the confidence region and treats the covariance as coming from a multivariate normal distribution
+Ellipse <- ellipse::ellipse(Empirical_Covariance,centre = Empirical_Mean,level=0.95)
+EllipseDF <- data.frame(Ellipse)
+# plot data and 95% confidence ellipse together
+p3 <- ggplot(females, aes(height, weight)) +
+  geom_point() +
+  # plot 95% confidence ellipse
+  geom_path(data = EllipseDF, aes(height, weight), color = 'blue') + 
+  ggtitle('3a. Female height and weight')
+p3
+```
+
+```{r, include = FALSE}
+# ### old stuff below
+# # other method
+# p2 <- ggplot(females, aes(height, weight)) +
+# geom_point() +
+# # plot 95% confidence ellipse
+# stat_ellipse(type = "norm", level = 0.95) +
+# ggtitle('OLD Female height and weight')
+# # another way that is slightly different
+# library(car)
+# dataEllipse(females$weight, females$height, levels=0.95, col = 'red')
+# # compare the 2 plots
+# library(gridExtra)
+# grid.arrange(p2, p3, nrow = 1)
+```
+
+
+
+
+## Problem 3b
+
+```{r}
+# standardize the data using built-in function
+Scaled_Females <- scale(females)
+Scaled_Females <- data.frame(Scaled_Females)
+# check that we get mean of 0 and sd of 1
+# colMeans(Scaled_Females) 
+# apply(Scaled_Females, 2, sd)
+
+Scaled_Empirical_Covariance <- var(Scaled_Females)
+Scaled_Empirical_Mean <- colMeans(Scaled_Females)
+Scaled_Fit <- mvrnorm(n = 1000, Scaled_Empirical_Mean, Scaled_Empirical_Covariance, empirical = TRUE)
+# plot fit and data points
+# the ellipse package's ellipse command outlines the confidence region and treats the covariance as coming from a multivariate normal distribution
+Scaled_Ellipse <- ellipse::ellipse(Scaled_Empirical_Covariance,centre = Scaled_Empirical_Mean,level=0.95)
+Scaled_EllipseDF <- data.frame(Scaled_Ellipse)
+# plot data and 95% confidence ellipse together
+Scaled_p3 <- ggplot(Scaled_Females, aes(height, weight)) +
+  geom_point() +
+  # plot 95% confidence ellipse
+  geom_path(data = Scaled_EllipseDF, aes(height, weight), color = 'blue') + 
+  ggtitle('3b. Standardized female height and weight')
+Scaled_p3
+```
+
+
+
+## Problem 3c
+```{r}
+# referred to : https://www.projectrhea.org/rhea/images/1/15/Slecture_ECE662_Whitening_and_Coloring_Transforms_S14_MH.pdf
+# Whitening the data
+scaled_females_matrix <- data.matrix(Scaled_Females)
+covariance_matrix <- t(scaled_females_matrix)%*%scaled_females_matrix
+U <- eigen(covariance_matrix)$vectors
+# diagonal matrix of eigenvalues
+Lambda <- diag(eigen(covariance_matrix)$values)
+Lambda_inverse <- solve(Lambda)
+sqrt_Lambda_inverse <- sqrt(Lambda_inverse)
+
+whitened <- sqrt_Lambda_inverse%*%t(U)%*%t(scaled_females_matrix)
+whitened <- data.frame(t(whitened))
+colnames(whitened) <- c('height','weight')
+# whitened covariance should be proportional to the identity matrix
+# covariances should be statistically 0
+Whitened_Empirical_Covariance <- var(whitened)
+Whitened_Empirical_Mean <- colMeans(whitened)
+Whitened_Fit <- mvrnorm(n = 1000, Whitened_Empirical_Mean, Whitened_Empirical_Covariance, empirical = TRUE)
+# plot fit and data points
+# the ellipse package's ellipse command outlines the confidence region and treats the covariance as coming from a multivariate normal distribution
+Whitened_Ellipse <- ellipse::ellipse(Whitened_Empirical_Covariance,centre = Whitened_Empirical_Mean,level=0.95)
+Whitened_EllipseDF <- data.frame(Whitened_Ellipse)
+# plot data and 95% confidence ellipse together
+Whitened_p3 <- ggplot(whitened, aes(height, weight)) +
+  geom_point() +
+  # plot 95% confidence ellipse
+  geom_path(data = Whitened_EllipseDF, aes(height, weight), color = 'blue') + 
+  ggtitle('3c. Whitened female height and weight')
+Whitened_p3
+```
+
+```{r, include = FALSE}
+# putting plots together
+library(gridExtra)
+grid.arrange(p3, Scaled_p3, Whitened_p3, nrow = 2)
+```
+
+
+
+## Problem 3d
+```{r}
+# referenced http://faculty.smu.edu/kyler/courses/7314/Hotellings_T.pdf
+# install.packages('ICSNP')
+library(ICSNP)
+# Calculate 2-sample T-Squared test statistic
+# H0: the mean for females' data is the same as the mean for males' data
+# Assuming the same covariance
+with(my_data, HotellingsT2(cbind(height,weight)~gender))
+```
+A transformation of Hotelling's T2 is distributed as an F-distribution, so we can look at the statistical significance derived from the F-distribution. We get a low p-value close to 0, so we can reject the null hypothesis that the mean for males is the same as the mean for females. (The T.2 output is the transformed test-statistic)
+
+
+
+## Problem 4c
+```{r}
+library(ICSNP)
+library(MASS)
+mu = c(0,0,0)
+# independently distributed
+Sigma = diag(x=2,nrow=3,ncol=3)
+N = 100
+nreps = 1000
+# vector to store whether H0 is rejected
+# H0: mu = 0
+rejects = c()
+for(i in 1:nreps){
+  samples <- mvrnorm(n = N, mu, Sigma, empirical = FALSE)
+  # sample_mean <- colMeans(samples)
+  # sample_covariance <- var(samples)
+  # t2 <- N%*%t(sample_mean)%*%solve(Sigma)%*%sample_mean
+  # mu = NULL hypothesizes there is no difference in means
+  pVal <- HotellingsT2(samples, mu=NULL, test = 'chi')$p.value
+  if(pVal<=0.05){
+    rejects = c(rejects,1)
+  }
+  else{
+    rejects = c(rejects,0)
+  }
+}
+sum(rejects)/nreps
+```
+The limiting chi-squared distribution does control the type I error well. In about 6% of trials, there is type I error, i.e. the true mean is 0 but the p-value of the test statistic rejects the hypothesis that the true mean is 0.
+
+
+
+## Problem 4d
+```{r}
+# for different values of p
+p = 10
+mu = rep(0,p)
+# independently distributed
+Sigma = diag(x=2,nrow=p,ncol=p)
+N = 100
+nreps = 1000
+# vector to store whether H0 is rejected
+# H0: mu = 0
+rejects = c()
+for(i in 1:nreps){
+  samples <- mvrnorm(n = N, mu, Sigma, empirical = FALSE)
+  pVal <- HotellingsT2(samples, mu=NULL, test = 'chi')$p.value
+  if(pVal<=0.05){
+    rejects = c(rejects,1)
+  }
+  else{
+    rejects = c(rejects,0)
+  }
+}
+sum(rejects)/nreps
+
+p = 40
+mu = rep(0,p)
+# independently distributed
+Sigma = diag(x=2,nrow=p,ncol=p)
+N = 100
+nreps = 1000
+# vector to store whether H0 is rejected
+# H0: mu = 0
+rejects = c()
+for(i in 1:nreps){
+  samples <- mvrnorm(n = N, mu, Sigma, empirical = FALSE)
+  pVal <- HotellingsT2(samples, mu=NULL, test = 'chi')$p.value
+  if(pVal<=0.05){
+    rejects = c(rejects,1)
+  }
+  else{
+    rejects = c(rejects,0)
+  }
+}
+sum(rejects)/nreps
+
+p = 80
+mu = rep(0,p)
+# independently distributed
+Sigma = diag(x=2,nrow=p,ncol=p)
+N = 100
+nreps = 1000
+# vector to store whether H0 is rejected
+# H0: mu = 0
+rejects = c()
+for(i in 1:nreps){
+  samples <- mvrnorm(n = N, mu, Sigma, empirical = FALSE)
+  pVal <- HotellingsT2(samples, mu=NULL, test = 'chi')$p.value
+  if(pVal<=0.05){
+    rejects = c(rejects,1)
+  }
+  else{
+    rejects = c(rejects,0)
+  }
+}
+sum(rejects)/nreps
+```
+As the fixed value for p increases, the limiting chi-squared distribution gets worse at controlling the type I error. For p=10, p=40, and p=80, we reject the true null hypothesis about 12%, 73%, and 100% of the time in 1000 trials, respectively. 
+
+
+## Problem 4f
+```{r}
+############################ 4f #####################
+# Literature reference: https://projecteuclid.org/download/pdfview_1/euclid.aos/1266586615
+Alternate_To_Hotelling = function(samples) {
+  # Bai and Saranadasa (1996) used Euclidean norm of the difference between means
+  # to replace Hotelling's T2
+  # calculate sample size and observed means
+  N = nrow(samples)
+  sample_mean = apply(samples, 2, mean)
+  # Euclidean norm
+  return(norm(sample_mean, type = '2')) 
+}
+
+# get empirical distribution of the limiting distribution of the test statistic
+TestStats = c()
+for(i in 100:300){
+  p = i+20
+  mu = rep(0,p)
+  # independently distributed
+  Sigma = diag(x=2,nrow=p,ncol=p)
+  samples <- mvrnorm(n = i, mu, Sigma, empirical = FALSE)
+  NewTest <- Alternate_To_Hotelling(samples)
+  TestStats <- c(TestStats, NewTest)
+}
+EmpiricalCdf = ecdf(TestStats)    # function that gives the empirical CDF of X
+# plot(EmpiricalCdf)  # plot empirical CDF
+CriticalValue <- quantile(EmpiricalCdf, 0.95)
+
+set.seed(123)
+p = 80
+mu = rep(0,p)
+# independently distributed
+Sigma = diag(x=2,nrow=p,ncol=p)
+N = 50
+nreps = 1000
+# vector to store whether H0 is rejected
+# H0: mu = 0
+rejects = c()
+for(i in 1:nreps){
+  samples <- mvrnorm(n = N, mu, Sigma, empirical = FALSE)
+  NewTest <- Alternate_To_Hotelling(samples)
+  if(NewTest<=CriticalValue){
+    rejects = c(rejects,1)
+  }
+  else{
+    rejects = c(rejects,0)
+  }
+}
+sum(rejects)/nreps
+```
+
+If p > N, we cannot use Hotelling's T2-test, because the covariance matrix is not full rank and therefore is not invertible. I use Bai and Saranadasa (1996)'s proposal and  calculate the Euclidean norm of the difference between the sample mean and the true mean. There is Type I error about 9% of the time, so this test statistic seems to work.

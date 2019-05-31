@@ -1,0 +1,741 @@
+---
+title: "STATS 601 HW4"
+author: "Jessica Liu"
+output: html_document
+---
+## Problem 1
+```{r Problem1}
+library("kernlab")
+library(plotly)
+# setwd('../../Downloads')
+nyt <- load('nytimes.RData')
+# taken from Lab 4
+### Kernel PCA-Gaussian kernel
+# rbfdot stands for radial basis kernel function, Gaussian
+# kpar specifies parameters of kernel functions
+# in kpar, sigma stands for inverse kernel width
+
+# not sure if this is right
+# project each article onto a subspace with 1, 2, 3 dimensions
+# plot their principal components on 1D, 2D, 3D space, respectively
+kpc1 <- kpca(~.,data=nyt.frame[,-1],kernel="rbfdot",kpar=list(sigma=0.2),features=1)
+kpc2 <- kpca(~.,data=nyt.frame[,-1],kernel="rbfdot",kpar=list(sigma=0.2),features=2)
+kpc3 <- kpca(~.,data=nyt.frame[,-1],kernel="rbfdot",kpar=list(sigma=0.2),features=3)
+
+kpc1DF <- data.frame(pcv(kpc1))
+colnames(kpc1DF) <- 'P1'
+kpc1Plot <- plot_ly(kpc1DF, x = ~ P1, 
+                     type="scatter", mode="markers", color= nyt.frame[,1])
+kpc2DF <- data.frame(pcv(kpc2))
+colnames(kpc2DF) <- c('P1','P2')
+kpc2Plot <- plot_ly(kpc2DF, x = ~ P1, y = ~ P2,
+                    type="scatter", mode="markers", color= nyt.frame[,1])
+kpc3DF <- data.frame(pcv(kpc3))
+colnames(kpc3DF) <- c('P1','P2','P3')
+kpc3Plot <- plot_ly(kpc3DF, x = ~ P1, y = ~ P2, z = ~ P3,
+        type="scatter3d", mode="markers", color= nyt.frame[,1])
+```
+```{r problem1_gaussianplots, echo=FALSE, out.width = '50%'}
+knitr::include_graphics("HW4Problem1_1.png")
+knitr::include_graphics("HW4Problem1_2.png")
+knitr::include_graphics("HW4Problem1_3.png")
+```
+
+```{r}
+### Kernel PCA-polynomial kernel
+# polydot is polynomial kernel, we want degree=2 -> 2nd degree polynomial. Corresponds to lab4.pdf slide 13 d = 2.
+Polykpc1 <- kpca(~.,data=nyt.frame[,-1],kernel=polydot, kpar = list(degree=3), features = 1)
+Polykpc2 <- kpca(~.,data=nyt.frame[,-1],kernel=polydot, kpar = list(degree=3), features = 2)
+Polykpc3 <- kpca(~.,data=nyt.frame[,-1],kernel=polydot, kpar = list(degree=3), features = 3)
+Polykpc1DF <- data.frame(pcv(Polykpc1))
+colnames(Polykpc1DF) <- 'P1'
+Polykpc1Plot <- plot_ly(Polykpc1DF, x = ~ P1, 
+                    type="scatter", mode="markers", color= nyt.frame[,1])
+Polykpc2DF <- data.frame(pcv(Polykpc2))
+colnames(Polykpc2DF) <- c('P1','P2')
+Polykpc2Plot <- plot_ly(Polykpc2DF, x = ~ P1, y = ~ P2,
+                    type="scatter", mode="markers", color= nyt.frame[,1])
+Polykpc3DF <- data.frame(pcv(Polykpc3))
+colnames(Polykpc3DF) <- c('P1','P2','P3')
+Polykpc3Plot <- plot_ly(Polykpc3DF, x = ~ P1, y = ~ P2, z = ~ P3,
+                    type="scatter3d", mode="markers", color= nyt.frame[,1])
+```
+```{r problem1_polyplots, echo=FALSE, out.width = '50%'}
+knitr::include_graphics("HW4Problem1_4.png")
+knitr::include_graphics("HW4Problem1_5.png")
+knitr::include_graphics("HW4Problem1_6.png")
+```
+
+For both the Gaussian and polynomial kernels, 2 dimensions separate the classes well. This is the same conclusion as HW2.
+
+
+## Problem 2A
+```{r Problem2A}
+spamTrain <- read.table('spam-data/spam-train.txt', header = FALSE, sep = ",", dec = '.')
+spamTest <- read.table('spam-data/spam-test.txt', header = FALSE, sep = ",", dec = '.')
+TrainLabels <- spamTrain[,58] 
+TestLabels <- spamTest[,58] 
+TrainLabels <- as.factor(TrainLabels) # just added these yesterday -- if they break anything take them out
+TestLabels <- as.factor(TestLabels) # just added these yesterday
+spamTrain <- spamTrain[,-58] # remove last column which is the labels
+spamTest <- spamTest[,-58] # remove last column which is the labels
+spamTrain1 <- scale(spamTrain) # standardize to mean 0 and variance 1
+spamTest1 <- scale(spamTest)   # standardize to mean 0 and variance 1
+spamTrain2 <- data.frame(lapply(spamTrain, function(x) log(x+1)))
+spamTest2 <- data.frame(lapply(spamTest, function(x) log(x+1)))
+spamTrain3 <- data.frame(lapply(spamTrain, function(x) x>0)) # indicator
+spamTest3 <- data.frame(lapply(spamTest, function(x) x>0))
+
+set.seed(123)
+# choose lambda by CV
+library(glmnet)
+cv.lasso <- cv.glmnet(spamTrain1, TrainLabels, alpha = 0, family = "binomial") # 0 for ridge regression, binomial because of binary outcome
+lambda <- cv.lasso$lambda.min # best lambda
+predict0 <- function(Theta, X){
+  1-1/(1+exp(X%*%Theta))
+  # equals exp(X%*%Theta)/(1+exp(X%*%Theta))
+}
+
+# this is the log of the L(theta) on the page that says logistic regression notes
+log_lik = function(X, labels, Theta, lambda){
+  observations = length(labels)
+  
+  predictions = predict0(Theta, X)
+  
+  #Take the error when label=1
+  class1_cost = -labels%*%log(predictions) # maybe try summing here, and not sum(cost)
+  
+  #Take the error when label=0
+  class2_cost = (1-labels)%*%log(1-predictions) # maybe try summing here, and not sum(cost)
+  
+  #Take the sum of both costs
+  cost = class1_cost + class2_cost 
+  
+  cost = sum(cost) + lambda*t(theta)%*%theta
+  
+  return(cost)
+}
+
+library(Matrix)
+# Iteratively reweighted least squares IRLS
+Hessian <- function(muVector, xMatrix){
+  results <- list() # to return 2 results
+  W <- c() # for a diagonal matrix that stores mu(1-mu) for each observation
+  sum = 0
+  for(i in 1:length(muVector)){
+    sumObs <- muVector[i]*(1-muVector[i])*xMatrix[i,]%*%t(xMatrix[i,])
+    # muVector[i] is a scalar, xVector[i] is a vector of x's for that observation
+    sum <- sum+sumObs
+    W <- c(W, muVector[i]*(1-muVector[i])) # to create diagonal matrix
+  }
+  results$Hessian <- -sum # notice the negative
+  results$W <- Matrix::.sparseDiagonal(x=W) # compute sparse diagonal matrix to save time when inverting later
+  return(results)
+}
+
+# training set
+X <- spamTrain1
+Y <- as.numeric(as.character(TrainLabels))
+loglik = function(x) log_lik(spamTrain1, TrainLabels, x)
+
+# Iteratively Reweighted Least Squares
+# initialize theta
+niter = 3
+theta <- rep(0,ncol(X))
+NumericTrainLabels <- as.numeric(as.character(TrainLabels))
+for(iteration in 1:niter){
+  eta <- spamTrain1%*%theta
+  # initial mu from Long's p. 25
+  mu <- 1/(1+exp(-eta))
+  # Iteratively reweighted least squares to maximize log likelihood
+  # get H, H$Hessian is the hessian matrix, H$W is the diagonal matrix W
+  H <- Hessian(mu, spamTrain1)
+  # get Z
+  Z <- eta+solve(H$W)%*%NumericTrainLabels-mu
+  # new theta
+  theta <- solve(t(spamTrain1)%*%H$W%*%spamTrain1)%*%t(spamTrain1)%*%H$W%*%Z
+}
+  
+# using new theta from IRLS
+# probability of being spam
+# f(x_i) = t(theta) * X, opposite of next line because next line is element wise while this is matrix notation
+prob <- spamTrain1%*%theta
+# if prob is negative, then not spam (0)
+# if prob is positive, then it is spam (1)
+classify1 <- prob>0
+error1 <- classify1 != as.numeric(as.character(TrainLabels))
+sum(error1)/length(classify1) # error rate
+
+# probability of being spam
+# f(x_i) = t(theta) * X, opposite of next line because next line is element wise while this is matrix notation
+prob <- spamTest1%*%theta
+# if prob is negative, then not spam (0)
+# if prob is positive, then it is spam (1)
+classify1 <- prob>0
+error1 <- classify1 != as.numeric(as.character(TestLabels))
+sum(error1)/length(classify1) # error rate
+
+
+# Applying penalized logistic regression to version 2 of the data
+X <- spamTrain2
+Y <- TrainLabels
+MatSpamTrain2 <- as.matrix(spamTrain2)
+loglik = function(x) log_lik(spamTrain2, TrainLabels, x)
+
+# Iteratively Reweighted Least Squares
+# initialize theta
+niter = 2
+theta <- rep(0,ncol(X))
+NumericTrainLabels <- as.numeric(as.character(TrainLabels))
+for(iteration in 1:niter){
+  eta <- MatSpamTrain2%*%theta
+  # initial mu from Long's p. 25
+  mu <- 1/(1+exp(-eta))
+  # Iteratively reweighted least squares to maximize log likelihood
+  # get H, H$Hessian is the hessian matrix, H$W is the diagonal matrix W
+  H <- Hessian(mu, MatSpamTrain2)
+  # get Z
+  Z <- eta+solve(H$W)%*%NumericTrainLabels-mu
+  # new theta
+  theta <- solve(t(MatSpamTrain2)%*%H$W%*%MatSpamTrain2)%*%t(MatSpamTrain2)%*%H$W%*%Z
+}
+
+
+# using new theta from IRLS
+# training set
+prob <- MatSpamTrain2%*%theta
+# if prob is negative, then not spam (0)
+# if prob is positive, then it is spam (1)
+classify1 <- prob>0
+error1 <- classify1 != as.numeric(as.character(TrainLabels))
+sum(error1)/length(classify1) # error rate
+
+# test set
+# probability of being spam
+# f(x_i) = t(theta) * X, opposite of next line because next line is element wise while this is matrix notation
+prob <- as.matrix(spamTest2)%*%theta
+# if prob is negative, then not spam (0)
+# if prob is positive, then it is spam (1)
+classify1 <- prob>0
+error1 <- classify1 != as.numeric(as.character(TestLabels))
+sum(error1)/length(classify1) # error rate
+
+
+# Applying penalized logistic regression to version 3 of the data
+X <- spamTrain3
+Y <- TrainLabels
+loglik = function(x) log_lik(spamTrain3, TrainLabels, x)
+# convert to matrix, and drop columns 55-57 since they are all TRUE
+MatSpamTrain3 <- subset(spamTrain3, select=-c(55:57))
+MatSpamTrain3 <- as.matrix(MatSpamTrain3)
+MatSpamTest3 <- subset(spamTest3, select=-c(55:57))
+MatSpamTest3 <- as.matrix(MatSpamTest3)
+
+# Iteratively Reweighted Least Squares
+# initialize theta
+niter = 2
+theta <- rep(0,ncol(MatSpamTrain3))
+NumericTrainLabels <- as.numeric(as.character(TrainLabels))
+for(iteration in 1:niter){
+  eta <- MatSpamTrain3%*%theta
+  # initial mu from Long's p. 25
+  mu <- 1/(1+exp(-eta))
+  # Iteratively reweighted least squares to maximize log likelihood
+  # get H, H$Hessian is the hessian matrix, H$W is the diagonal matrix W
+  H <- Hessian(mu, MatSpamTrain3)
+  # get Z
+  Z <- eta+solve(H$W)%*%NumericTrainLabels-mu
+  # new theta
+  theta <- solve(t(MatSpamTrain3)%*%H$W%*%MatSpamTrain3)%*%t(MatSpamTrain3)%*%H$W%*%Z
+}
+
+
+# using new theta from IRLS
+# training set
+prob <- MatSpamTrain3%*%theta
+# if prob is negative, then not spam (0)
+# if prob is positive, then it is spam (1)
+classify1 <- prob>0
+error1 <- classify1 != as.numeric(as.character(TrainLabels))
+sum(error1)/length(classify1) # error rate
+
+# test set
+# probability of being spam
+# f(x_i) = t(theta) * X, opposite of next line because next line is element wise while this is matrix notation
+prob <- MatSpamTest3%*%theta
+# if prob is negative, then not spam (0)
+# if prob is positive, then it is spam (1)
+classify1 <- prob>0
+error1 <- classify1 != as.numeric(as.character(TestLabels))
+sum(error1)/length(classify1) # error rate
+```
+
+## Problem 2B
+```{r Problem2B}
+set.seed(123)
+spamTrain1_Class0 <- spamTrain1[which(TrainLabels==0),] # data for class 0
+spamTrain1_Class1 <- spamTrain1[which(TrainLabels==1),] # data for class 1
+spamTrain1_Means0 <- colMeans(spamTrain1_Class0)
+spamTrain1_Means1 <- colMeans(spamTrain1_Class1)
+
+
+# calculate covariance matrix
+sum <- 0
+for(i in 1:dim(spamTrain1_Class1)[1])
+{
+  dataSample <- spamTrain1_Class1[i,]
+  deMeaned <- dataSample - spamTrain1_Means1
+  sum <- sum + unlist(deMeaned) %*% t(unlist(deMeaned))
+}
+for(i in 1:dim(spamTrain1_Class0)[1])
+{
+  dataSample <- spamTrain1_Class0[i,]
+  deMeaned <- dataSample - spamTrain1_Means0
+  sum <- sum + unlist(deMeaned) %*% t(unlist(deMeaned))
+}
+sigma <- sum / (dim(spamTrain1)[1]-2)
+
+# calculate B in notes on page titled Linear discriminant analysis (binary classification)
+B <- solve(sigma)%*%(spamTrain1_Means1-spamTrain1_Means0)
+gamma <- -1/2*t(spamTrain1_Means1-spamTrain1_Means0)%*%solve(sigma)%*%(spamTrain1_Means1+spamTrain1_Means0)
+# on training set, get the predicted classification
+predictedClass <- c()
+for(i in 1:dim(spamTrain1)[1]){
+  x <-  spamTrain1[i,]
+  probability1 <- 1/(1+exp(-t(B)%*%x-gamma))
+  probability0 <- 1-probability1
+  prediction <- probability1>probability0
+  predictedClass <- c(predictedClass, prediction)
+}
+predictedClass <- as.factor(as.numeric(predictedClass)) # change from TRUE/FALSE to factor 0 1
+( dim(spamTrain1)[1] - sum(predictedClass == TrainLabels) ) / dim(spamTrain1)[1] # error rate
+
+# predict on test set
+predictedClass <- c()
+for(i in 1:dim(spamTest1)[1]){
+  x <-  spamTest1[i,]
+  probability1 <- 1/(1+exp(-t(B)%*%x-gamma))
+  probability0 <- 1-probability1
+  prediction <- probability1>probability0
+  predictedClass <- c(predictedClass, prediction)
+}
+predictedClass <- as.factor(as.numeric(predictedClass)) # change from TRUE/FALSE to factor 0 1
+( dim(spamTest1)[1] - sum(predictedClass == TestLabels) ) / dim(spamTest1)[1] # error rate
+
+
+# now do the same thing but using log transformed training and test data
+set.seed(123)
+spamTrain2_Class0 <- spamTrain2[which(TrainLabels==0),] # data for class 0
+spamTrain2_Class1 <- spamTrain2[which(TrainLabels==1),] # data for class 1
+spamTrain2_Means0 <- colMeans(spamTrain2_Class0)
+spamTrain2_Means1 <- colMeans(spamTrain2_Class1)
+# calculate covariance matrix
+sum <- 0
+for(i in 1:dim(spamTrain2_Class1)[1])
+{
+  dataSample <- spamTrain2_Class1[i,]
+  deMeaned <- dataSample - spamTrain2_Means1
+  sum <- sum + unlist(deMeaned) %*% t(unlist(deMeaned))
+}
+for(i in 1:dim(spamTrain2_Class0)[1])
+{
+  dataSample <- spamTrain2_Class0[i,]
+  deMeaned <- dataSample - spamTrain2_Means0
+  sum <- sum + unlist(deMeaned) %*% t(unlist(deMeaned))
+}
+sigma <- sum / (dim(spamTrain2)[1]-2)
+# calculate B in notes on page titled Linear discriminant analysis (binary classification)
+B <- solve(sigma)%*%(spamTrain2_Means1-spamTrain2_Means0)
+gamma <- -1/2*t(spamTrain2_Means1-spamTrain2_Means0)%*%solve(sigma)%*%(spamTrain2_Means1+spamTrain2_Means0)
+# on training set, get the predicted classification
+predictedClass <- c()
+for(i in 1:dim(spamTrain2)[1]){
+  x <-  unlist(spamTrain2[i,])
+  probability1 <- 1/(1+exp(-t(B)%*%x-gamma))
+  probability0 <- 1-probability1
+  prediction <- probability1>probability0
+  predictedClass <- c(predictedClass, prediction)
+}
+predictedClass <- as.factor(as.numeric(predictedClass)) # change from TRUE/FALSE to factor 0 1
+( dim(spamTrain2)[1] - sum(predictedClass == TrainLabels) ) / dim(spamTrain2)[1] # error rate
+
+
+# predict on test set
+predictedClass <- c()
+for(i in 1:dim(spamTest2)[1]){
+  x <-  unlist(spamTest2[i,]) # spamTest2 is a data frame after lapply transformation
+  probability1 <- 1/(1+exp(-t(B)%*%x-gamma))
+  probability0 <- 1-probability1
+  prediction <- probability1>probability0
+  predictedClass <- c(predictedClass, prediction)
+}
+predictedClass <- as.factor(as.numeric(predictedClass)) # change from TRUE/FALSE to factor 0 1
+( dim(spamTest2)[1] - sum(predictedClass == TestLabels) ) / dim(spamTest2)[1] # error rate
+```
+
+## Problem 2C
+```{r Problem2c}
+library(e1071) # has naiveBayes
+model <- naiveBayes(TrainLabels ~ ., data = spamTrain3)
+pred <- predict(model, spamTest3)
+sum(pred != TestLabels)/length(TestLabels)
+
+# separate train data into observations that are spam (1) and not spam (0)
+spamTrain3Spam <- spamTrain3[which(TrainLabels==1),]
+spamTrain3NotSpam <- spamTrain3[which(TrainLabels==0),]
+p_y0 <- (summary(as.factor(TrainLabels))[1])/length(TrainLabels) # the MLE of P(Y=1) is the proportion that are labeled 0
+p_y1 <- (summary(as.factor(TrainLabels))[2])/length(TrainLabels) # the MLE of P(Y=1) is the proportion that are labeled 1
+
+
+# remove columns 55-57 because they are all discretized as 0 so we can't take log(0)
+spamTrain3SpamSubset <- subset(spamTrain3Spam, select=-c(55:57))
+spamTrain3NotSpamSubset <- subset(spamTrain3NotSpam, select=-c(55:57))
+nrowsSpam <- dim(spamTrain3SpamSubset)[1]
+pcolsSpam <- dim(spamTrain3SpamSubset)[2]
+nrowsNotSpam <- dim(spamTrain3NotSpam)[1]
+pcolsNotSpam <- dim(spamTrain3NotSpamSubset)[2]
+spamTest3Subset <- subset(spamTest3, select=-c(55:57))
+
+# get b_0, b_1
+# b_0 elements are: log p_y0, then log p_0jk for each j,k
+# that is, for observations classified as not spam, for each attribute, what is the proportion that they are 0? what is the proportion that they are 1?
+b0 <- c(log(p_y0))
+# this is given that these observations are classified as not spam
+for(attribute in 1:pcolsNotSpam){ # NOT SURE IF HERE I SHOULD BE USING SPAMTRAIN3
+  # for each attribute, given that they are not spam, get sample proportion with value 0
+  # how many of this attribute are 1 / the total times this attribute appears in class 0 dataset
+  proportion0 <- sum(spamTrain3NotSpamSubset[,attribute])/nrowsNotSpam
+  b0 <- c(b0, log(proportion0))
+}
+for(attribute in 1:pcolsNotSpam){ # NOT SURE IF HERE I SHOULD BE USING SPAMTRAIN3
+  # for each attribute, given that they are not spam, get sample proportion with value 1
+  # how many of this attribute are 0 / the total times this attribute appears in class 0 dataset
+  proportion0 <- sum(spamTrain3NotSpamSubset[,attribute])/nrowsNotSpam
+  proportion1 <- 1 - proportion0
+  b0 <- c(b0, log(proportion1))
+}
+# b_1 elements are: p_y1, then p_1jk for each j,k
+# that is, for observations classified as spam, for each attribute, what is the proportion that they are 0? what is the proportion that they are 1?
+b1 <- c(log(p_y1))
+# this is given that these observations are classified as not spam
+for(attribute in 1:pcolsSpam){ # NOT SURE IF HERE I SHOULD BE USING SPAMTRAIN3
+  # for each attribute, given that they are not spam, get sample proportion with value 0
+  # how many of this attribute are 1 / the total times this attribute appears in class 0 dataset
+  proportion0 <- sum(spamTrain3SpamSubset[,attribute])/nrowsSpam
+  b1 <- c(b1, log(proportion0))
+}
+for(attribute in 1:pcolsSpam){ # NOT SURE IF HERE I SHOULD BE USING SPAMTRAIN3
+  # for each attribute, given that they are not spam, get sample proportion with value 1
+  # how many of this attribute are 0 / the total times this attribute appears in class 0 dataset
+  proportion0 <- sum(spamTrain3SpamSubset[,attribute])/nrowsSpam
+  proportion1 <- 1 - proportion0
+  b1 <- c(b1, log(proportion1))
+}
+B <- as.matrix(rbind(b0,b1))
+
+# apply to test set
+# create z
+# exp(t(b_i) %*% z / (sum over l of exp(t(b_l) %*% z)) > 0.5, then classify as 1
+# z is a vector with the following elements: 1, 54 indicators for whether each of 54 attributes is 0,  54 indicator for whether each of 54 attributes is 1
+z <- data.frame() # 1st element is 1
+for(observation in 1:nrow(spamTest3Subset)){ 
+  # for each observation, keep a list of each attribute in the observation
+  attributeIndicators <- c()
+  for(attribute in 1:ncol(spamTest3Subset)){ # NOT SURE IF HERE I SHOULD BE USING SPAMTRAIN3, or spamsubset + notspamsubset
+    indicator <- spamTest3Subset[observation, attribute] == FALSE
+    attributeIndicators <- c(attributeIndicators, indicator)
+  }
+  attributeIndicators <- c(1, attributeIndicators) # make the 1st element 1
+  for(attribute in 1:ncol(spamTest3Subset)){ 
+    indicator <- spamTest3Subset[observation, attribute] == TRUE
+    attributeIndicators <- c(attributeIndicators, indicator)
+  }
+  # each row of data frame z shows whether each attribute in that row is 0 (FALSE) or 1 (TRUE)
+  z <- rbind(z, attributeIndicators)
+}
+
+
+# exp(t(b_i) %*% z / (sum over l of exp(t(b_l) %*% z)) > 0.5, then classify as 1
+# get numerator for each observation i
+# for observations classified as not spam
+prob <- c() # if less than 0.5, we classify as not spam. If greater than 0.5, we classify as spam
+for(i in 1:nrow(spamTest3Subset)){
+  # use the same P_0jk, P_1jk, p_y0, p_y1 from training set
+  # only changing whether each attribute is true or false
+  obs0 <- exp ( B[1,] %*% t(z[i,]) ) # same observation, calculating for class 0
+  obs1 <- exp ( B[2,] %*% t(z[i,]) ) # same observation, calculating for class 1
+  obsprob <- obs0/ ( obs0 + obs1) # # exp(t(b_i) %*% z / (sum over l of exp(t(b_l) %*% z))
+  # obsprob <- log(obsprob/obs1) # take log, as in notebook on page after 3/11 Quadratic Discriminant Analysis
+  prob <- c(prob, obsprob)
+}
+pred1 <- prob>0.5
+sum(pred1 != as.numeric(as.character(TestLabels)))/length(TestLabels)
+```
+
+## Problem 2D
+```{r Problem2D}
+# Kernel logistic regression for Gaussian kernel
+library(CVST)
+klr = constructKlogRegLearner()
+klrData <- constructData(spamTrain1,TrainLabels)
+klrTest <- constructData(spamTest1, TestLabels)
+# tune sigma, nu
+# rbfdot is Gaussian kernel
+params = constructParams(kernel="rbfdot", sigma=10^(-1:1), lambda=10^(-1:1))
+opt = CV(klrData, klr, params)
+# gaussian kernel
+errors <- c()
+for(i in c(seq(0.1,0.9,by=0.1))){
+  for(j in c(seq(0.1,0.9,by=0.1))){
+    p = list(kernel="rbfdot", sigma=i, lambda=j, tol=10e-4, maxiter=100)
+    m = klr$learn(klrData, p)
+    pred = klr$predict(m, klrTest)
+    wrong <- sum(pred != klrTest$y) / getN(klrTest) # error
+    errors <- c(errors, wrong)
+  }
+}
+errorsMat <- matrix(errors,nrow = 9,ncol = 9)
+errorsMat <- data.frame(t(errorsMat))
+row.names(errorsMat) <- paste('sigma',c(seq(0.1,0.9, by=0.1)), sep="")
+colnames(errorsMat) <- paste(c(seq(0.1,0.9, by=0.1)), sep="")
+min(errorsMat) # occurs at sigma = 0.6, lambda = 0.1 and 0.2
+subset <- errorsMat[1:9,1:4]
+df = cbind(subset, row_number = seq(0.1, 0.9, by=0.1))
+library(reshape2)
+df_melt = melt(df, id = "row_number")
+ggplot(df_melt, aes(x = variable, y = value, group = row_number)) + 
+  geom_line(stat = "identity") + facet_wrap(~row_number, nrow = 1, scales = "fixed") +
+  labs(x ="Sigma", y = "Lambda")
+p = list(kernel="rbfdot", sigma=0.6, lambda=0.1, tol=10e-4, maxiter=100)
+m = klr$learn(klrData, p)
+pred = klr$predict(m, klrTest)
+wrong <- sum(pred != klrTest$y) / getN(klrTest) # error
+wrong
+
+# apply to version 2 of data
+klr = constructKlogRegLearner()
+klrData <- constructData(as.matrix(spamTrain2),TrainLabels)
+klrTest <- constructData(as.matrix(spamTest2), TestLabels)
+p = list(kernel="rbfdot", sigma=0.6, lambda=0.1, tol=10e-4, maxiter=100)
+m = klr$learn(klrData, p)
+pred = klr$predict(m, klrTest)
+wrong <- sum(pred != klrTest$y) / getN(klrTest) # error
+wrong
+
+# apply to version 3 of data
+klr = constructKlogRegLearner()
+klrData <- constructData(as.matrix(spamTrain3),TrainLabels)
+klrTest <- constructData(as.matrix(spamTest3), TestLabels)
+p = list(kernel="rbfdot", sigma=0.6, lambda=0.1, tol=10e-4, maxiter=100)
+m = klr$learn(klrData, p)
+pred = klr$predict(m, klrTest)
+wrong <- sum(pred != klrTest$y) / getN(klrTest) # error
+wrong
+```
+For Gaussian kernel, we see that for a fixed sigma, as lambda increases, the misclassification error gets higher. When we fix lambda to be a low number, we see that as sigma increases, the misclassification errors gets lower, and then gets slightly higher again.
+
+```{r Problem2Dpolykernel}
+# Kernel logistic regression for polynomial kernel
+klr = constructKlogRegLearner()
+klrData <- constructData(spamTrain1,TrainLabels)
+klrTest <- constructData(spamTest1, TestLabels)
+# took a few min to run this
+ptm <- proc.time()
+params = constructParams(kernel="polydot", degree=seq(1,3), offset = 1)
+opt = CV(klrData, klr, params)
+errorsPoly <- c()
+for(i in c(seq(1,3))){
+  for(j in c(seq(1,3))){
+    p = list(kernel="polydot", degree=i, scale=j)
+    m = klr$learn(klrData, p)
+    pred = klr$predict(m, klrTest)
+    wrong <- sum(pred != klrTest$y) / getN(klrTest) # error
+    errorsPoly <- c(errorsPoly, wrong)
+  }
+}
+errorsMat <- matrix(errorsPoly,nrow = 3,ncol = 3)
+errorsMat <- data.frame(t(errorsMat))
+row.names(errorsMat) <- paste('degree',c(seq(1,3)), sep="")
+colnames(errorsMat) <- paste(c(seq(1,3)), sep="")
+min(errorsMat) # min error at degree = 3, scale = 3
+
+p = list(kernel="polydot", degree=3, scale = 3, offset=1)
+m = klr$learn(klrData, p)
+pred = klr$predict(m, klrTest)
+wrong <- sum(pred != klrTest$y) / getN(klrTest) # error
+wrong
+
+# apply to version 2 of data
+klr = constructKlogRegLearner()
+klrData <- constructData(as.matrix(spamTrain2),TrainLabels)
+klrTest <- constructData(as.matrix(spamTest2), TestLabels)
+p = list(kernel="polydot", degree=3, scale = 3, offset=1)
+m = klr$learn(klrData, p)
+pred = klr$predict(m, klrTest)
+wrong <- sum(pred != klrTest$y) / getN(klrTest) # error
+wrong
+
+# apply to version 3 of data
+klr = constructKlogRegLearner()
+klrData <- constructData(as.matrix(spamTrain3),TrainLabels)
+klrTest <- constructData(as.matrix(spamTest3), TestLabels)
+p = list(kernel="polydot", degree=3, scale = 3, offset=1)
+m = klr$learn(klrData, p)
+pred = klr$predict(m, klrTest)
+wrong <- sum(pred != klrTest$y) / getN(klrTest) # error
+wrong
+```
+As the tuning parameter scale increases, the misclassification error decreases. For degrees 1 to 3, holding the scale parameter fixed, the error does not change much.
+
+```{r Problem2Table}
+# make a table of errors for problem 2
+table <- matrix(ncol= 3, nrow = 5)
+rownames(table) <- c('Pen.LR', 'LDA', 'NaiveBayes', 'Gaussian Kernel LR' ,'Poly Kernel LR')
+table[1,] <- c(8,24,24)
+table[2,] <- c(9,6,NA)
+table[3,] <- c(NA,NA,10)
+table[4,] <- c(7,11,11)
+table[5,] <- c(54,60,60)
+table
+```
+
+
+## Problem 3A and 3F
+```{r Problem3A}
+library(ggplot2)
+classif_dat_txt <- read.table('classification_dat.txt', header = FALSE, sep = " ", dec = '.')
+classif_test_txt <- read.table('classification_test.txt', header = FALSE, sep = " ", dec = '.')
+library(MASS)
+# identify what are the features and what are the labels
+classif_train = list(data = classif_dat_txt[,1:2], classes = classif_dat_txt[,3]) 
+classif_test = list(data = classif_test_txt[,1:2], classes = classif_test_txt[,3]) 
+classif_train$classes <- as.factor(classif_train$classes)
+classif_test$classes <- as.factor(classif_test$classes)
+
+library(splines)
+additiveLR <-stats::glm(classif_train$classes~ns(V2, df=3) + ns(V1, df=3), data = classif_train$data, family = 'binomial')
+# make a grid of different x1 and x2 on which to predict on
+totalpoints = 300
+x1points = seq(from=min(classif_train$data), to = max(classif_train$data), length.out = totalpoints)
+x2points = seq(from=min(classif_train$data), to = max(classif_train$data), length.out = totalpoints)
+grid = expand.grid(V1=x1points, V2=x2points)
+gridPredictions = stats::predict(additiveLR, newdata = grid, type = 'response')
+curve = grid[order(abs(gridPredictions-0.5))[1:100],] # sort the predictions by how close they are to 0.5, then take the 1st 100 sorted ones (they are closest to 0.5)
+curve = curve[order(curve[,2]),] # order the points so that we can connect them in one line
+row.names(curve) = NULL
+curve <- data.frame(curve)
+# plot training data by class
+p0 <- ggplot()
+p1 <- p0 + geom_point(data = classif_train$data, aes(x=classif_train$data$V1, y=classif_train$data$V2, shape=classif_train$classes, color=classif_train$classes, group = classif_train$classes), size=2) + scale_shape_manual(values=c(1, 4))
+p2 <- p1 + geom_path(data=curve, aes(x=V1, y=V2),linejoin = 'mitre')
+```
+
+## Problem 3B
+```{r Problem3B}
+
+LDAmodel <- MASS::lda(classif_train$data, classif_train$classes) # CV = true to return posterior for leave one out CV
+# LDAmodel$prior tells you the proportion of your training data that is in class 0, and in class 1
+LDApredict <- predict(LDAmodel, newdata = classif_train$data)
+
+# to calculate posterior (probability of being class 0 given x)
+# https://www.quora.com/Mathematical-Modeling-How-are-posterior-probabilities-calculated-in-linear-discriminant-analysis
+classif_train_1 <- classif_train$data[which(classif_train$classes==1),] # data for class 1
+classif_train_0 <- classif_train$data[which(classif_train$classes==0),] # data for class 0
+train1Means <- colMeans(classif_train_1)
+train0Means <- colMeans(classif_train_0)
+
+# calculate covariance matrix
+sum <- 0
+for(i in 1:dim(classif_train_1)[1])
+{
+  dataSample <- classif_train_1[i,]
+  deMeaned <- dataSample - train1Means
+  sum <- sum + unlist(deMeaned) %*% t(unlist(deMeaned))
+}
+for(i in 1:dim(classif_train_0)[1])
+{
+  dataSample <- classif_train_0[i,]
+  deMeaned <- dataSample - train0Means
+  sum <- sum + unlist(deMeaned) %*% t(unlist(deMeaned))
+}
+sigma <- sum / (dim(classif_train$data)[1]-2)
+
+# calculate B in notes on page titled Linear discriminant analysis (binary classification)
+B <- solve(sigma)%*%(train1Means-train0Means)
+gamma <- -1/2*t(train1Means-train0Means)%*%solve(sigma)%*%(train1Means+train0Means)
+
+posteriorProb <- function(x, B, gamma){
+  phi <- 1/( 1 + exp(-(t(B)%*%x + gamma)))
+}
+# solving for posteriorProb = 0.5, we get x2 = -gamma - B[1]/B[2]*x
+p3 <- p2 + geom_abline(aes(intercept= -gamma,slope= -B[1]/B[2], color = 'LDA'))
+```
+
+## Problem 3C
+```{r Problem3C}
+logit <- glm(classif_train$classes ~.,family=binomial(link='logit'),data=classif_train$data)
+# linear predictor = model$coefficients[1] + model$coefficients[2]*x1 + model$coefficients[3]*x3
+# probability of being in class 1 is 1 / (1 + exp(linear predictor))
+# see hw 4 notes in spiral, solving for x2
+p4 <- p3 + geom_abline(aes(intercept= -logit$coefficients[1]/logit$coefficients[3],slope= -logit$coefficients[2]/logit$coefficients[3],  color = 'logistic')) 
+```
+
+## Problem 3E
+```{r Problem3E}
+lm <- lm(as.numeric(as.character(classif_train$classes)) ~.,data=classif_train$data)
+# see hw 4 notes in spiral, solving for x2
+p5 <- p4 + geom_abline(aes(intercept= (0.5-lm$coefficients[1])/lm$coefficients[3], slope= -lm$coefficients[2]/lm$coefficients[3],  color = 'linear')) 
+```
+
+## Problem 3G
+```{r Problem3G}
+library(CVST)
+klr = constructKlogRegLearner()
+trainData <- as.matrix(classif_train$data)
+testData <- as.matrix(classif_test$data)
+klrData <- constructData(trainData,classif_train$classes)
+klrTest <- constructData(testData, classif_test$classes)
+# tune sigma, nu
+ptm <- proc.time()
+# took a few min to run this, rbfdot is Gaussian kernel
+params = constructParams(kernel="rbfdot", sigma=10^(-1:1), lambda=10^(-1:1))
+opt = CV(klrData, klr, params)
+print(ptm-proc.time())
+# gaussian kernel
+ptm <- proc.time()
+errors <- c()
+p = list(kernel="rbfdot", sigma=0.1, lambda=0.01, tol=10e-4, maxiter=100)
+m = klr$learn(klrData, p)
+pred = klr$predict(m, klrTest)
+wrong <- sum(pred != klrTest$y) / getN(klrTest) # error
+# Error of 10% 
+
+totalpoints = 30
+x1points = seq(from=min(classif_train$data), to = max(classif_train$data), length.out = totalpoints)
+x2points = seq(from=min(classif_train$data), to = max(classif_train$data), length.out = totalpoints)
+grid = expand.grid(V1=x1points, V2=x2points)
+gridclass <- as.factor(sample(c(0,1),30*30, T))
+gridObj = constructData(as.matrix(grid), gridclass)
+gridPredictions = klr$predict(m, gridObj)
+curve = grid[order(abs(gridPredictions-0.5))[1:100],] # sort the predictions by how close they are to 0.5, then take the 1st 100 sorted ones (they are closest to 0.5)
+curve = curve[order(curve[,2]),] # order the points so that we can connect them in one line
+row.names(curve) = NULL
+curve <- data.frame(curve)
+```
+
+## Problem 3H
+```{r Problem3H}
+# plot test data
+testp0 <- ggplot()
+testp1 <- testp0 + geom_point(data = classif_test$data, aes(x=classif_test$data$V1, y=classif_test$data$V2, shape=classif_test$classes, color=classif_test$classes, group = classif_test$classes), size=2) + scale_shape_manual(values=c(1, 4))
+testp2 <- testp1 + geom_path(data=curve, aes(x=V1, y=V2),linejoin = 'mitre')
+testp3 <- testp2 + geom_abline(aes(intercept= -gamma,slope= -B[1]/B[2], color = 'LDA'))
+testp4 <- testp3 + geom_abline(aes(intercept= -logit$coefficients[1]/logit$coefficients[3],slope= -logit$coefficients[2]/logit$coefficients[3],  color = 'logistic')) 
+testp5 <- testp4 + geom_abline(aes(intercept= (0.5-lm$coefficients[1])/lm$coefficients[3], slope= -lm$coefficients[2]/lm$coefficients[3],  color = 'linear')) 
+```
+```{r pressure, echo=FALSE, out.width = '50%'}
+knitr::include_graphics("p5.png")
+knitr::include_graphics("testp5.png")
+```
+
+The black line is the additive logistic regression model. We see the results for the test data are similar to the train data results. The best classifiers are logistic and additive logistic.

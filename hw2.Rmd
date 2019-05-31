@@ -1,0 +1,379 @@
+---
+title: "STATS601 Homework 2"
+author: "Jessica Liu"
+output: html_document
+always_allow_html: yes
+---
+
+## Problem 2A
+```{r echo = T, results = 'hide'}
+library(processx) # to convert plotly to static images
+library(orca) # to convert plotly to static images
+library(webshot) # to convert plotly to static images
+load('../../Downloads/nytimes.RData')
+dim(nyt.frame)
+nyt.frame[1,1:5]
+# ignore class labels
+nyt.frameNoClass <- subset(nyt.frame, select=-class.labels)
+# trying method from lecture using Gram matrix
+library('Matrix')
+# create sparse matrix
+nyt.frameNoClass <- as.matrix(nyt.frameNoClass)
+sparseNyt <- as(nyt.frameNoClass, "dgCMatrix")
+# center y's
+# get means of each column
+mu <- colMeans(sparseNyt)
+# de-mean each column
+DeMeaned <- sweep(sparseNyt, 2, apply(sparseNyt, 2, mean))
+# use gram matrix to make dimensions smaller 
+# the eigenvalues of this are proportional to eigenvalues of covariance matrix of sparseNyt
+GramMatrix <- (1/dim(DeMeaned)[1])*DeMeaned%*%t(DeMeaned)
+# get eigenvalues 
+eigen <- eigen(GramMatrix)
+dim(eigen$vectors)
+# transform each eigenvector of the gram matrix to the eigenvector of sparseNyt
+TransformEigen <- function(OldEigenvalues, OldEigenvectors){
+  newEigVec <- c()
+  for(i in 1:dim(DeMeaned)[1]){
+    if(OldEigenvalues[i] > 10^-5){
+      Transform <- 1/sqrt(dim(DeMeaned)[1]*OldEigenvalues[i])*t(DeMeaned)%*%OldEigenvectors[,i]
+      newEigVec <- cbind(newEigVec, Transform)
+    }else{ # if eigenvalue is too small such that 1/sqrt(dim(DeMeaned)[1]*OldEigenvalues[i]) will throw an NaN
+      newEigVec <- newEigVec
+    }
+  }
+  return(newEigVec)
+}
+newEigVec <- TransformEigen(eigen$values, eigen$vectors)
+```
+
+
+## Problem 2B
+```{r, results='hide'}
+# convert sparse back to full, add labels back
+fullMatrix <- as.matrix(DeMeaned)
+fullMatrix <- cbind(nyt.frame[,1],fullMatrix)
+fullEigVec <- as.matrix(newEigVec)
+WithoutClass <- fullMatrix[,-1]
+# convert to numeric for matrix multiplication
+class(WithoutClass) <- "numeric" 
+class(fullEigVec) <- "numeric" 
+# project onto 1, 2, 3 principal components
+projection1 <- WithoutClass %*% fullEigVec[,1]
+projection2 <- WithoutClass %*% fullEigVec[,1:2]
+projection3 <- WithoutClass %*% fullEigVec[,1:3]
+
+# plot onto 1, 2, 3 dimensions
+library(plotly)
+labels = nyt.frame[,1]
+idx = TRUE
+projection1 <- WithoutClass %*% fullEigVec[,1]
+projection1DF <- data.frame(projection1[idx,],labels[idx])
+colnames(projection1DF) = c("P1", "Label")
+plot_data1 = plot_ly(projection1DF, x = ~ P1, 
+                     type="scatter", mode="markers", color= ~Label)
+projection2 <- WithoutClass %*% fullEigVec[,1:2]
+projection2DF <- data.frame(projection2[idx,],labels[idx])
+colnames(projection2DF) = c("P1", "P2", "Label")
+plot_data2 = plot_ly(projection2DF, x = ~ P1, y = ~ P2, 
+                     type="scatter", mode="markers", color= ~Label)
+projection3 <- WithoutClass %*% fullEigVec[,1:3]
+projection3DF <- data.frame(projection3[idx,],labels[idx])
+colnames(projection3DF) = c("P1", "P2", "P3", "Label")
+plot_data3 = plot_ly(projection3DF, x = ~ P1, y = ~ P2, z = ~ P3,
+                     type="scatter3d", mode="markers", color= ~Label)
+```
+```{r pressure, echo=FALSE, fig.cap="A caption", out.width = '100%'}
+knitr::include_graphics("HW2Problem2BPlotData1.png")
+knitr::include_graphics("HW2Problem2BPlotData2.png")
+knitr::include_graphics("HW2Problem2BPlotData3.png")
+```
+```
+
+We can see that projecting onto a subspace with two dimensions separates the two classes of articles reasonably well. 
+
+
+## Problem 2C
+```{r, results='hide'}
+fullEigVecDF <- as.data.frame(fullEigVec)
+fullEigVecDF$Idx <- seq(1,dim(fullEigVecDF)[1])
+# convert row names from fullEigVecDF into a column
+fullEigVecDF <- data.table:: setDT(fullEigVecDF, keep.rownames = 'Word')[]
+# move Idx column to beginning
+library(dplyr)
+fullEigVecDF <- fullEigVecDF %>%
+  select(c(Idx,Word), everything())
+
+# get top 20 words
+Top20 <- function(EigenVectorsDF, column, Decreasing){
+  # passing in column as a column name, equivalent to EigenVectorsDF[, column]
+  # sort a column to get the 20 largest eigenvectors / 20 smallest eigenvectors
+  order(EigenVectorsDF[[column]], decreasing=Decreasing)[1:20]
+}
+# top 20 words in W1 principal component direction
+# do the same for W2 and W3
+maxWords_1 <- lapply(Top20(fullEigVecDF,'V1',T), function (x) fullEigVecDF[x,'Word']) # report words corresponding to maximum positive weights
+minWords_1 <- lapply(Top20(fullEigVecDF,'V1',F), function (x) fullEigVecDF[x,'Word']) # report words corresponding to maximum positive weights
+maxWords_2 <- lapply(Top20(fullEigVecDF,'V2',T), function (x) fullEigVecDF[x,'Word'])
+minWords_2 <- lapply(Top20(fullEigVecDF,'V2',F), function (x) fullEigVecDF[x,'Word'])
+maxWords_3 <- lapply(Top20(fullEigVecDF,'V3',T), function (x) fullEigVecDF[x,'Word'])
+minWords_3 <- lapply(Top20(fullEigVecDF,'V3',F), function (x) fullEigVecDF[x,'Word'])
+```
+```{r}
+unlist(maxWords_1) # music / musicians / orchestra
+unlist(minWords_1) # people / painting / sculpture
+unlist(maxWords_2) # art / museum / gallery
+unlist(minWords_2) # performing, theater, opera, vocal, orchestra
+unlist(maxWords_3) # donation, museum, festival, dealer (not very clear theme)
+unlist(minWords_3) # band, trio, music, sound, vocal
+```
+
+The first PC dimension is primarily about music, and the second is primarily about art.
+The maximum weights for the first PC direction correspond to music (while the minimum weights for the first PC direction correspond to people and art.)
+The maximum weights for the 2nd PC direction correspond to art/painting (while the minimum weights correspond to performances and music). The maximum weights for the 3rd PC direction have no clear theme, referring to donation, museums, and directors, and the minimum weights correspond to sounds / music. 
+
+
+## Problem 3B
+```{r}
+set.seed(301)
+library(MASS)
+corr = t(rbind(c(rep(1,4),rep(0,3)),c(rep(0,3),rep(1,4))))
+mu = rep(0,7)
+Xmu = c(0,0)
+XSigma = diag(1, nrow=2, ncol = 2)
+Wmu = rep(0,7)
+WSigma = 0.4*diag(1, nrow=7, ncol = 7)
+observations = c()
+for(i in 1:100){
+  # draw a 2x1 x
+  x <- mvrnorm(n = 1, mu=Xmu, Sigma=XSigma, empirical = FALSE)
+  # draw a 7x1 w
+  w <- mvrnorm(n = 1, mu=Wmu, Sigma=WSigma, empirical = FALSE)
+  # get a 7 x 100 vector, 100 observations of Y, Y is 7x1
+  observations <- cbind(observations,mu + corr%*%x + w)
+}
+# make Y 100 x 7
+observations <- t(observations)
+
+# # estimate lambda and phi empirically, then plug into equation
+# needed to install libraries first
+# install.packages('cate')
+# from http://bioconductor.org/packages/release/bioc/html/sva.html
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#   install.packages("BiocManager")
+# BiocManager::install("sva", version = "3.8")
+library(cate)
+# get lambda and phi empirically
+factors1 <- cate::factor.analysis(observations, r = 2, "ml")
+LambdaHat <- factors1$Gamma # estimated factor loadings, 7x2
+PsiHat <- diag(factors1$Sigma) # estimated noise variance, 7x1
+
+# Problem 3 part b
+term1 <- solve(diag(1, nrow=2, ncol=2) + t(LambdaHat) %*% solve(PsiHat) %*% LambdaHat)
+Xhat <- term1 %*% t(LambdaHat) %*% solve(PsiHat) %*% t(observations)
+Xhat <- data.frame(t(Xhat))
+plot3 <- ggplot(Xhat, aes(X1, X2)) + 
+  geom_point()
+plot3
+
+# run factor analysis, given factors = 2
+# first name columns
+factors <- factanal(observations, factors = 2) 
+print(factors, digits=2, sort=TRUE)
+```
+
+
+## Problem 3C
+```{r}
+# run PCA on our covariates
+pca = princomp(observations[,1:7],cor=T)
+summary(pca)
+loadings(pca)
+library(factoextra) # ggplot2 based visualization
+factoextra::fviz_pca_biplot(pca, 
+                addEllipses = TRUE, label = "var",
+                col.var = "black", repel = TRUE)
+```
+
+76% of the total variance is explained by two factors in the factor analysis model. PCA explains a bit more variance in that 83% of the total variance is explained by PCA's two principal components. The first two principal components picks up the variance across all of the elements in Y. However, the leading factor picks up correlation in Y1 to Y4, and the second largest factor picks up correlation in Y4 to Y8.
+
+
+## Problem 4A
+```{r}
+set.seed(201)
+library(ggplot2)
+eigenvalues <- c() # each row is 1 iteration of the permuted Y, columns are sorted from the largest to the smallest eigenvalue
+for(i in 1:1000){
+  # independently permute each column of the observations from problem 3
+  PermutedObservations <- apply(observations, 2, sample)
+  # compute the eigenvalues
+  # FactoMineR does PCA and computes eigenvalues
+  permuted.pca <- FactoMineR::PCA(PermutedObservations, graph = FALSE)
+  eigenvalues <- rbind(eigenvalues, permuted.pca$eig[,1])
+}
+eigenvalues <- as.data.frame((eigenvalues))
+# now we want to make a plot of our largest eigenvalue from each iteration
+# and a plot of our second largest eigenvalue from each iteration, etc.
+library(tidyr)
+library(ggplot2)
+# reshape data to long form
+eigenvalues %>% tidyr::gather() %>% head()
+# show 7 plots to show the distribution of the 7 eigenvalues over all iterations
+ggplot(gather(eigenvalues), aes(value)) + 
+  geom_histogram(bins = 50) + 
+  facet_wrap(~key) + 
+  theme(text = element_text(size=15))
+# get the 50th percentile of each permuted eigenvalue distribution
+permutedMedian <- sapply(eigenvalues, median)
+# compare with eigenvalues from non-permuted matrix (same as Problem 3)
+pca2 <- FactoMineR::PCA(observations, graph = FALSE)
+pca2$eig[,1] > permutedMedian
+```
+Comparing these observed eigenvalues with the distribution of the eigenvalues of the permuted matrix, we can decide there are 2 principal components. This is because the first two principal components are much farther to the right of the distribution of the eigenvalues from the permuted matrix, so there is signal. The third principal component is less than the 50th percentile of the distribution of the third largest eignvalue from the permuted matrices, so it is likely noise, which means the smaller principal components are likely noise too.
+
+
+## Problem 4B
+```{r}
+set.seed(355)
+library(abind) # for arrays, including 3D
+corr = t(rbind(c(rep(1,4),rep(0,3)),c(rep(0,3),rep(1,4))))
+mu = rep(0,7)
+Xmu = c(0,0)
+XSigma = diag(1, nrow=2, ncol = 2)
+Wmu = rep(0,7)
+WSigma = 0.4*diag(1, nrow=7, ncol = 7)
+
+PC <- c() # 3D array that stores PCA components from each time we generate data matrix Y
+LargeEnoughPC <- c() # PC components that are larger than median of the distribution of permuted eigenvalues
+for(k in 1:100){ # 100 trials of comparing against permuted eigenvalues
+  PermutedEig <- c() # each row is 1 iteration of the permuted Y, columns are sorted from the largest to the smallest eigenvalue
+  
+  # in this inner loop we generate data matrix Y of size 100 x 7
+  observations = c() 
+  for(j in 1:100){ 
+    # draw a 2x1 x
+    x <- mvrnorm(n = 1, mu=Xmu, Sigma=XSigma, empirical = FALSE)
+    # draw a 7x1 w
+    w <- mvrnorm(n = 1, mu=Wmu, Sigma=WSigma, empirical = FALSE)
+    # get a 7 x 100 vector, 100 observations of Y, Y is 7x1
+    observations <- cbind(observations,mu + corr%*%x + w)
+  }
+  # make Y 100 x 7
+  observations <- t(observations)  
+  # get PCA and eigenvalues from non-permuted matrix
+  pca2 <- FactoMineR::PCA(observations, graph = FALSE)
+  PC <- abind(PC, pca2$eig, along = 3)
+  
+  # permute 500 times to get distribution of permuted eigenvalues
+  for(i in 1:500){
+    # independently permute each column of the observations
+    PermutedObservations <- apply(observations, 2, sample)
+    # get PCA and eigenvalues from permuted matrix
+    permuted.pca <- FactoMineR::PCA(PermutedObservations, graph = FALSE)
+    PermutedEig <- rbind(PermutedEig, permuted.pca$eig[,1])
+  }
+  
+  PermutedEig <- as.data.frame((PermutedEig))
+  # get the 50th percentile of each permuted eigenvalue distribution
+  permutedMedian <- sapply(PermutedEig, median)
+  # check if the original non-permuted eigenvalue (sorted from largest to smallest)
+  # is greater than the 50th percentile of the permuted eigenvalue
+  test <- pca2$eig[,1] > permutedMedian
+  LargeEnoughPC <- c(LargeEnoughPC, sum(test))
+  
+}
+
+summary(LargeEnoughPC)
+```
+The number of components are correctly estimated as 2 in all of the trials. 
+
+
+## Problem 4C
+```{r}
+# using the PC components generated in Part 4B
+LargeEnoughPC2 <- c()
+# of the 100 sets of principal components generated in 4b (by the 100 copies of 100 x 7 data matrix Y), select the components that explain 90% of variance
+for(i in 1:100){
+  PC90 <- min(which(PC[,,i][,3] >= 90)) # this finds the 1st position when cumulative variance is greater than 90
+  LargeEnoughPC2 <- c(LargeEnoughPC2, PC90)
+}
+```
+About 4 to 5 principal components explain 90% of the variance in all of these trials. However, the parallel analysis method in 4B shows that 2 principal components are likely to have signal. This shows that choosing the components that explain 90% of the variance is not stable; however, parallel analysis is stable, as we always get the same result.
+
+## Problem 4D
+```{r}
+# determine number of factors to extract using maximum likelihood
+# need n.obs to perform hypothesis test that the number of specified factors is sufficient
+# the null hypothesis is that the specified number of factors is sufficient
+factorFit <- factanal(observations,factors=1, n.obs = 100, rotation="varimax") 
+print(factorFit, digits = 2, sort = TRUE) 
+# at factors = 2 we cannot reject the null hypothesis that 2 factors is sufficient
+update(factorFit,factors=2)
+```
+We estimate that 2 factors is sufficient. 2 factors explain close to 70% of the variance.
+
+## Problem 4E
+```{r}
+set.seed(201)
+corr = t(rbind(c(rep(1,4),rep(0,3)),c(rep(0,3),rep(1,4))))
+mu = rep(0,7)
+Xmu = c(0,0)
+XSigma = diag(1, nrow=2, ncol = 2)
+Wmu = rep(0,7)
+WSigma = 0.4*diag(1, nrow=7, ncol = 7)
+reject = c() # if we reject the null hypothesis that 2 factors are sufficient
+# do factor analysis 500 times 
+for(j in 1:500){
+  # reset observations for next iteration
+  observations <- c()
+  for(i in 1:100){
+    # draw a 2x1 x
+    x <- mvrnorm(n = 1, mu=Xmu, Sigma=XSigma, empirical = FALSE)
+    # draw a 7x1 w
+    w <- mvrnorm(n = 1, mu=Wmu, Sigma=WSigma, empirical = FALSE)
+    # get a 7 x 100 vector, 100 observations of Y, Y is 7x1
+    observations <- cbind(observations,mu + corr%*%x + w)
+  }
+  # make Y 100 x 7
+  observations <- t(observations)
+  # check if we can reject the null that 2 factors is sufficient
+  factorFit <- factanal(observations,factors=2,n.obs = 100,rotation="varimax") 
+  if(factorFit$PVAL <= 0.10){
+    reject <- c(reject, 1)
+  } else {
+    reject <- c(reject, 0)
+  }
+}
+500-sum(reject)
+```
+450/500 times (90% of the time) we cannot reject the null hypothesis that 2 factors are sufficient, so we can be pretty sure of our estimate of 2 factors.
+
+
+## Problem 5
+```{r}
+library(graphics)
+set.seed(201)
+corr = rbind(c(1,0,0),c(1,0.001,0),c(0,0,10))
+mu = c(0,0,0)
+Sigma = diag(1, nrow=3, ncol = 3)
+observations = c()
+for(i in 1:500){ 
+  # draw a 3x1 x
+  x <- mvrnorm(n = 1, mu, Sigma, empirical = FALSE) # empirical = FALSE because population mu and Sigma are specified
+  # get a 3 x 500 vector, 500 observations of Y, Y is 3x1
+  observations <- cbind(observations,corr%*%x)
+}
+# make Y 500 x 3 
+observations <- t(observations)
+
+# run PCA on our 3 covariates
+pca = princomp(observations[,1:3])  # cor=False in this argument
+loadings(pca)
+
+# run factor analysis on our 3 covariates
+library(stats)
+factors = factanal(observations, factors = 1) 
+factors$loadings
+```
+The leading PC component is proportional to [0;0;1] corresponding to [Y1; Y2; Y3], thus it aligns itself in the direction of Y3. This is because PCA tries to maximize the variance of the x's, so the leading PC component picks up the direction of the largest variance. Since x3 has variance 10, much larger than the variance of the other x's, the leading PC component aligns itself in the direction of Y3. The leading factor is proportional to [1;1;0] corresponding to [Y1; Y2; Y3], therefore it picks up the correlation between Y1+Y2. The aim of factor analysis is to estimate a low-rank structure such that the residuals are uncorrelated, so the leading factor is in the direction of highest correlation, which is between Y1+Y2. Please see handwritten answer for more explanation.
+

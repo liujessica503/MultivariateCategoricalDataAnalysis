@@ -1,0 +1,621 @@
+---
+title: "STATS 601 HW5"
+author: "Jessica Liu"
+output: html_document
+---
+
+```{r, echo = FALSE}
+# note to self: because Adaboost in 2B, 2C, 2D takes 10-15 min to run, I ran these prior to running the .rmd file, and saved the graphs for 2B and 2D as .png, and the data for 2C as .RData file. I call these in the document.
+```
+
+## Problem 1A
+```{r Problem 1A, messages = FALSE}
+set.seed(365)
+library(ggplot2)
+library(rpart) # for CART
+classif_dat_txt <- read.table('classification_dat.txt', header = FALSE, sep = " ", dec = '.')
+classif_test_txt <- read.table('classification_test.txt', header = FALSE, sep = " ", dec = '.')
+library(MASS)
+# identify what are the features and what are the labels
+classif_train = list(data = classif_dat_txt[,1:2], classes = classif_dat_txt[,3]) 
+classif_test = list(data = classif_test_txt[,1:2], classes = classif_test_txt[,3]) 
+classif_train$classes <- as.factor(classif_train$classes)
+classif_test$classes <- as.factor(classif_test$classes)
+
+cart <- rpart(classif_train$classes ~ ., data = classif_train$data, method = 'class') # class for classification tree
+cartpred <- predict(cart, type = "class", newdata = classif_test$data)
+sum(cartpred != classif_test$classes)/length(classif_test$classes) # error rate 9%
+
+library(ipred)
+bagging <- bagging(classif_train$classes ~., data=classif_train$data, coob=FALSE)
+bagpred <- predict(bagging, newdata = classif_test$data)
+sum(bagpred != classif_test$classes)/length(classif_test$classes) # error rate 11%
+
+library(randomForest)
+rf <- randomForest(classif_train$classes ~., data=classif_train$data)
+rfpred <- predict(rf, newdata = classif_test$data)
+sum(rfpred != classif_test$classes)/length(classif_test$classes) # error rate 8%
+
+library(fastAdaboost)
+traindata <- data.frame(cbind(classif_train$classes, classif_train$data$V1, classif_train$data$V2))
+colnames(traindata) <- c('Y','V1','V2')
+traindata$Y <- as.factor(traindata$Y)
+adaboost <- fastAdaboost::adaboost(Y~V1+V2, data=traindata, n=100)
+adapred <- predict(adaboost, newdata = data.frame(classif_test$data))
+adapred$class # predictions
+# change classif_test$classes levels to 1, 2 to match adapred
+library(plyr)
+testclasses <- revalue(classif_test$classes, c('0'='1', '1'='2'))
+sum(adapred$class != testclasses)/length(testclasses) # error rate 13%
+
+library(gbm)
+gradientboost <- gbm(
+  formula = classif_train$classes ~ .,
+  distribution = "multinomial",
+  data = classif_train$data,
+  n.trees = 100,
+  interaction.depth = 1)
+# gradientboost=gbm(classif_train$classes ~. ,data = classif_train$data,distribution = "multinomial", n.trees = 1000, interaction.depth = 4)
+# check performance using out of bag error
+best.iter <- gbm.perf(gradientboost, method = "OOB")
+print(best.iter)
+Yhat <- predict(gradientboost, newdata = classif_test$data, n.trees = best.iter, type = "response")
+# convert probabilities to most likely class
+# first get the first column in the 3D array Yhat
+gradpreds <- c()
+for(i in 1:dim(Yhat)[1]){
+  pred <- Yhat[i,1,1] # this extracts the probability that each observation is predicted as class 0
+  gradpreds <- c(gradpreds, pred)
+}
+gradpreds <- as.factor(gradpreds < 0.5) # if less than 0.5, then it is probably class 1, i.e. 'TRUE'. Greater than 0.5 means we predict we are in class 0 (since we extracted the column of predicted 0's)
+gradpreds <- revalue(gradpreds, c('FALSE'='0', 'TRUE'='1'))
+sum(gradpreds != classif_test$classes)/length(classif_test$classes) # error rate 9%
+
+```
+
+## Problem 1B
+```{r Problem 1B}
+library("neuralnet")
+nn <- neuralnet(classif_train$classes ~ ., data = classif_train$data, hidden = 1, act.fct = "logistic", linear.output = FALSE)
+prob <- predict(nn,newdata = classif_test$data) # predict probabilities of being in each class
+# take the first column (probability that the observation is predicted as class 0)
+nnpreds <- prob[,1]
+nnpreds <- as.factor(nnpreds < 0.5) # if less than 0.5, then it is probably class 1, i.e. 'TRUE'. Greater than 0.5 means we predict we are in class 0 (since we extracted the column of predicted 0's)
+nnpreds <- revalue(nnpreds, c('FALSE'='0', 'TRUE'='1'))
+mean(nnpreds != classif_test$classes) # error rate 10%
+
+```
+
+## Problem 1C
+```{r Problem 1C}
+# comparing 1A, 1B with methods from HW4
+set.seed(365)
+library(gam)
+LDAmodel <- MASS::lda(classif_train$data, classif_train$classes)
+LDApred <- predict(LDAmodel, newdata = classif_test$data)
+LDApred <- LDApred$class
+mean(LDApred != classif_test$classes) # error rate 17%
+additiveLR <-gam(classif_train$classes ~ s(V2) + s(V1), data = classif_train$data, family=binomial)
+additiveLRpred <- predict(additiveLR, newdata = classif_test$data)
+additiveLRpred <- ifelse(additiveLRpred>0, 1, 0)
+mean(additiveLRpred != classif_test$classes) # error rate 13%
+logit <- glm(classif_train$classes ~.,family=binomial(link='logit'),data=classif_train$data)
+logitpred <- predict(logit, newdata = classif_test$data)
+logitpred2 <- ifelse(logitpred>0, 1, 0)
+mean(logitpred2 != classif_test$classes) # error rate 11%
+lm <- lm(as.numeric(as.character(classif_train$classes)) ~.,data=classif_train$data)
+lmpred <- predict(lm, newdata = classif_test$data)
+lmpred2 <- ifelse(lmpred>0.5, 1, 0) # if the prediction is closer to 1, then classify as 1. If it's closer to 0, then classify as 0.
+mean(lmpred2 != classif_test$classes) # error rate 20%
+
+# gaussian kernel logistic regression
+library(CVST)
+klr = constructKlogRegLearner()
+trainData <- as.matrix(classif_train$data)
+testData <- as.matrix(classif_test$data)
+klrData <- constructData(trainData,classif_train$classes)
+klrTest <- constructData(testData, classif_test$classes)
+p <- list(kernel="rbfdot", sigma=0.1, lambda=0.01, tol=10e-4, maxiter=100)
+m <- klr$learn(klrData, p)
+kernelGaussianpred = klr$predict(m, klrTest)
+mean(kernelGaussianpred != classif_test$classes) # error rate 10%
+
+# summarize test errors of each method in a table
+table <- matrix(ncol= 1, nrow = 5)
+rownames(table) <- c('LDA', 'lm', 'additive LR', 'logistic regression' ,'Gaussian Kernel LR')
+names(dimnames(table)) <- list("", "Avg Misclassification Error on Test Set") 
+table[1,] <- c(0.17)
+table[2,] <- c(0.17)
+table[3,] <- c(0.13)
+table[4,] <- c(0.11)
+table[5,] <- c(0.10)
+table
+```
+
+The Gaussian kernel LR and logistic regression have a lower misclassifiation error on the test set compared to the other methods.
+
+
+
+## Problem 2A
+```{r Problem 2A, messages = FALSE}
+#### create Adaboost algorithm ####
+AdaBoost <- function(w, trainingData, trainingClasses, testData, M){ 
+  alphas <- c()
+  # w is a matrix of initialized weights
+  # trainingData is nobs * p matrix of predictors
+  # trainingClasses is nobs * 1 matrix of classes
+  # M is number of iterations
+  
+  traindata = list(data = data.frame(trainingData), classes = trainingClasses)
+  traindata$classes <- as.factor(traindata$classes)
+  testdata = list(data = data.frame(testData)) # don't need to include test classes
+  
+  # set this for getting error rate
+  testClasses <- trainingClasses 
+  
+  train_classifier <- 0 # will add to this in each iteration of M
+  test_classifier <- 0 # will add to this in each iteration of M
+  
+  for(m in 1:M){
+    cartAda <- rpart(traindata$classes ~ ., data = traindata$data, method = 'class', control = rpart.control(maxdepth=1,cp=-1,minsplit=0,xval=0), weights = w) # class for classification tree
+    currPrediction <- predict(cartAda, type = "class", newdata = traindata$data)
+    
+    # predict on test data
+    testPrediction <- predict(cartAda, type = "class", newdata = testdata$data)
+    
+    currPrediction <- as.factor(currPrediction)
+    # compute error
+    errNum <- 0 # initialize the numerator for the error
+    for(i in 1:nobs){
+      if(currPrediction[[i]] != testClasses[i]){ # if prediction for this observation is wrong
+        # print(i)
+        errNum <- errNum + w[i]
+      }
+    }
+    errDen <- sum(w) # denominator of error is the sum of all of the weights
+    err <- errNum / errDen
+    
+    # compute alpha
+    alpha <- log( (1 - err)/err )
+    
+    # store alphas (to use on test set)
+    alphas <- c(alphas, alpha)
+    
+    # update weights based on if prediction was wrong
+    for(i in 1:nobs){
+      if(currPrediction[i] != testClasses[i]){ # if prediction for this observation is wrong
+        # or != testclasses[i] ? 
+        w[i] <- w[i] * exp(alpha)
+      }
+    }
+    
+    train_classifier <- train_classifier + alpha * as.numeric(as.character(currPrediction))
+    test_classifier <- test_classifier + alpha * as.numeric(as.character(testPrediction))
+  }
+  
+  # output classifier for training data, and classifier for test data
+  return(list( sign(train_classifier), sign(test_classifier) ) )
+}
+```
+
+## Problem 2B
+```{r Problem 2B, messages = FALSE}
+# draw data according to textbook description
+set.seed(152)
+trainData <- matrix(nrow = 2000, ncol = 10)
+for(j in 1:10){
+  trainData[,j] <- rnorm(n = 2000, mean = 0, sd = 1)
+}
+trainData <- as.data.frame(trainData)
+# classes
+trainClasses <- c()
+for(i in 1:2000){
+  # sum of x1^2+x2^2...+xn^2
+  sum_x2 <- sum(unlist(lapply(trainData[i,], function(x) x^2))) 
+  if(sum_x2>9.34){
+    trainClasses <- c(trainClasses,1)
+  }
+  else{
+    trainClasses <- c(trainClasses,-1)
+  }
+}
+trainClasses <- as.factor(trainClasses)
+summary(trainClasses) # we have about 1000 cases in each class, as desired
+
+# draw test data
+# draw data according to textbook description
+set.seed(152)
+testData <- matrix(nrow = 10000, ncol = 10)
+for(j in 1:10){
+  testData[,j] <- rnorm(n = 10000, mean = 0, sd = 1)
+}
+testData <- as.data.frame(testData)
+# classes
+testClasses <- c()
+for(i in 1:10000){
+  # sum of x1^2+x2^2...+xn^2
+  sum_x2 <- sum(unlist(lapply(testData[i,], function(x) x^2))) 
+  if(sum_x2>9.34){
+    testClasses <- c(testClasses,1)
+  }
+  else{
+    testClasses <- c(testClasses,-1)
+  }
+}
+```
+```{r Problem 2B Code, eval=FALSE}
+# initialize observation weights, which are 1/N on each (x_i, y_i) where x is predictor and y is class
+nobs <- 2000 # number of observations
+ncol <- 10
+w <- rep(1/nobs, nobs)
+# m is number of times we want to re-weight
+trainErrors <- c() # store errors
+testErrors <- c() # store errors
+for(iters in seq(1,400,10)){
+  AdaBoostOutput <- AdaBoost(w,trainData, trainClasses, testData, iters)
+  trainSigns <- unlist(AdaBoostOutput[1])
+  trainMeanError <- mean(trainSigns!=trainClasses)
+  trainErrors <- c(trainErrors, trainMeanError)
+  testSigns <- unlist(AdaBoostOutput[2])
+  testMeanError <- mean(testSigns!=testClasses)
+  testErrors <- c(testErrors, testMeanError)
+}
+
+x <- seq(1,400,10)
+plot(x,trainErrors, type = 'l', xlim = c(0, 405), ylim = c(0, 0.5), main='Problem 2, Part B', xlab = 'Boosting Iterations', ylab = 'Error')
+lines(x, testErrors, col="red")
+legend(200, 0.5, legend=c("Train Error", "Test Error"), col=c("black", "red"), lty=c(1,1), cex=0.8)
+```
+```{r Problem 2B plot, echo=FALSE, out.width = '50%'}
+knitr::include_graphics("hw5problem2partb.png")
+```
+
+## Problem 2C
+```{r Problem 2C Code, eval=FALSE, messages = FALSE}
+# initialize observation weights, which are 1/N on each (x_i, y_i) where x is predictor and y is class
+nobs <- 2000 # number of observations
+ncol <- 10
+w <- rep(1/nobs, nobs)
+# look at how many iterations needed to make test error rise
+testErrors2 <- c() # store errors
+for(iters in seq(1,5000,100)){ # originally 1, 3500, 100
+  AdaBoostOutput <- AdaBoost(w,trainData, trainClasses, testData, iters)
+  testSigns2 <- unlist(AdaBoostOutput[2])
+  testMeanError2 <- mean(testSigns2!=testClasses)
+  testErrors2 <- c(testErrors2, testMeanError2)
+}
+```
+```{r, echo=FALSE}
+data <- load("hw5_6.RData")
+```
+```{r Problem 2C Data}
+testErrors2
+```
+
+The test error starts to rise around 3000 iterations. However, it doesn't rise much -- maybe this is because the rpart function I used tries to control this.
+
+## Problem 2D
+```{r Problem 2D, messages = FALSE}
+# draw data according to textbook description
+set.seed(365)
+# draw 1000 standard normal gaussians for class 1
+trainData2 <- matrix(nrow = 1000, ncol = 10)
+for(j in 1:10){
+  trainData2[,j] <- rnorm(n = 1000, mean = 0, sd = 1)
+}
+trainData2 <- as.data.frame(trainData2)
+colnames(trainData2) <- c('X1','X2','X3','X4','X5','X6','X7','X8','X9','X10')
+
+# for class 2, draw observations that meet our requirement sum_x2
+# first I will draw many observations, and then only keep the ones that meet our requirement
+trainData3 <- matrix(nrow = 4000, ncol = 10)
+for(rows in 1:4000){
+  test <- rnorm(n=10, mean = 0, sd = 1)
+  # only keep if the observation meets the below requirement
+  sum_x2 <- sum(unlist(lapply(test, function(x) x^2))) > 12
+  if(sum_x2==TRUE){
+    trainData3[rows,] <- test
+  }
+}
+trainData3 <- data.frame(trainData3)
+trainData3 <- trainData3[which(!is.na(trainData3$X1)),] # keep the rows that meet our requirement
+trainData3 <- trainData3[1:1000,] # keep the first 1000 that meet our requirement
+trainData2 <- rbind(trainData2, trainData3)
+trainData2 <- as.matrix(trainData2)
+trainData3 <- trainData2
+
+trainClasses2 <- c(rep(-1,1000),rep(1,1000)) # the 1st 1000 obs are in class 1, which I'm labeling -1, and the rest are in class 2, which I'm labeling 1
+trainClasses3 <- as.factor(trainClasses2)
+
+# for test set, first draw 5000 standard normal gaussians for class 1
+testData2 <- matrix(nrow = 5000, ncol = 10)
+for(j in 1:10){
+  testData2[,j] <- rnorm(n = 1000, mean = 0, sd = 1)
+}
+testData2 <- as.data.frame(testData2)
+colnames(testData2) <- c('X1','X2','X3','X4','X5','X6','X7','X8','X9','X10')
+
+# for test set, draw another 5000 observations conditioning on our requirement sum_x2
+# first I will draw many observations, and then only keep the ones that meet our requirement
+testData3 <- matrix(nrow = 12000, ncol = 10)
+for(rows in 1:12000){
+  test <- rnorm(n=10, mean = 0, sd = 1)
+  # only keep if the observation meets the below requirement
+  sum_x2 <- sum(unlist(lapply(test, function(x) x^2))) > 12
+  if(sum_x2==TRUE){
+    testData3[rows,] <- test
+  }
+}
+testData3 <- data.frame(testData3)
+testData3 <- testData3[which(!is.na(testData3$X1)),] # keep the rows that meet our requirement
+testData3 <- testData3[1:5000,] # keep the first 5000 that meet our requirement
+testData3 <- rbind(testData2, testData3)
+testData3 <- as.matrix(testData3)
+testData3 <- testData3
+testClasses3 <- c(rep(-1,5000),rep(1,5000))
+```
+```{r Problem 2D Code, eval=FALSE}
+# run Adaboost
+# initialize observation weights, which are 1/N on each (x_i, y_i) where x is predictor and y is class
+nobs <- 2000 # number of observations
+ncol <- 10
+w <- rep(1/nobs, nobs)
+# trainingData <- trainData
+# trainingClasses <- trainClasses
+# m is number of times we want to re-weight
+trainErrors3 <- c() # store errors
+testErrors3 <- c()
+for(iters in seq(1,400,10)){
+    AdaBoostOutput3 <- AdaBoost(w,trainData3, trainClasses3, testData3, iters)
+    trainSigns3 <- unlist(AdaBoostOutput3[1])
+    trainMeanError3 <- mean(trainSigns3!=trainClasses3)
+    trainErrors3 <- c(trainErrors3, trainMeanError3)
+    testSigns3 <- unlist(AdaBoostOutput3[2])
+    testMeanError3 <- mean(testSigns3!=testClasses3)
+    testErrors3 <- c(testErrors3, testMeanError3)
+}
+  
+x <- seq(1,400,10)
+plot(x,trainErrors3, type = 'l', xlim = c(0, 405), ylim = c(0, 0.5), main='Problem 2, Part D', xlab = 'Boosting Iterations', ylab = 'Error')
+lines(x, testErrors3, col="red")
+legend(200, 0.5, legend=c("Train Error", "Test Error"), col=c("black", "red"), lty=c(1,1), cex=0.8)
+```
+```{r Problem 2B Plot, echo=FALSE, out.width = '50%'}
+knitr::include_graphics("hw5problem2partd.png")
+```
+
+The training and testing error are higher if the classes have significant overlap in the feature space, compared to part B. The errors do not decrease as much over iterations as in part B. 
+
+
+For problem 4, I use a package to run neural net, and also code neural net without the package, and compare results.
+
+## Problem 4A and 4B, using nnet Package
+
+```{r Problem 4 Using Package, results='hide', messages = FALSE}
+set.seed(400)
+# part b 
+sigmoid = function(x) 1 / (1 + exp(-x))
+d_sigmoid = function(x) x * (1 - x)
+# draw X1, X2
+a1 <- c(3,3)
+a2 <- c(3, -3)
+Y <- c()
+X <- c()
+for(i in 1:100){
+  X1 <- rnorm(n=1, mean=0, sd=1)
+  X2 <- rnorm(n=1, mean=0, sd=1)
+  currentX <- c(X1,X2)
+  X <- rbind(X, currentX)
+  Z <- rnorm(n=1, mean=0, sd=1)
+  y <- sigmoid(a1%*%currentX) + (a2%*%currentX)^2 + 0.30*Z
+  Y <- c(Y, y)
+}
+trainNN <- data.frame(cbind(X,Y))
+
+# draw test data
+# draw X1, X2
+Ytest <- c()
+Xtest <- c()
+for(i in 1:1000){
+  X1 <- rnorm(n=1, mean=0, sd=1)
+  X2 <- rnorm(n=1, mean=0, sd=1)
+  currentX <- c(X1,X2)
+  Xtest <- rbind(Xtest, currentX)
+  Z <- rnorm(n=1, mean=0, sd=1)
+  y <- sigmoid(a1%*%currentX) + (a2%*%currentX)^2 + 0.30*Z
+  Ytest <- c(Ytest, y)
+}
+testNN <- data.frame(cbind(Xtest,Ytest))
+
+
+# scale the data, and call it scaledData
+maxs <- apply(trainNN, 2, max) 
+mins <- apply(trainNN, 2, min)
+scaledTrainNN <- as.data.frame(scale(trainNN, center = mins, scale = maxs - mins))
+scaledTrainData <- scaledTrainNN
+colnames(scaledTrainData)
+# make X and Y the scaled data and scaled classes, respectively
+X <- scaledTrainData[,1:2]
+Y <- scaledTrainData[,3]
+
+maxs <- apply(testNN, 2, max) 
+mins <- apply(testNN, 2, min)
+scaledTestNN <- as.data.frame(scale(testNN, center = mins, scale = maxs - mins))
+scaledTestData <- scaledTestNN
+
+
+# get best hidden nodes and decay parameter
+set.seed(123)
+library(caret)
+nnetGrid <-  expand.grid(size = seq(from = 2, to = 10, by = 2),
+                         decay = seq(from = 0.01, to = 0.5, by = 0.05))
+model.nn <- caret::train(Y ~ .,
+                  data = scaledTrainNN,
+                  method = "nnet", tuneGrid = nnetGrid) # tuning parameters are number of hidden units and weight decay
+# best parameters are hidden units = 4, decay = 0.01. hidden units = 10, decay = 0.01 is also good.
+```
+
+```{r Problem 4 Using Package Part2, echo=TRUE, results = 'hide', messages = FALSE}
+
+library(nnet)
+# get average test error for training and test data, with varying decay parameters
+
+meanTrainErrorsNN0.01 <- c()
+meanTestErrorsNN0.01 <- c()
+for(iter in seq(1,100,5)){
+    model <- nnet(Y~., data = scaledTrainData, decay = 0.01, size = 10, maxit = iter) # 10 hidden units
+    predictTrain <- predict(model, newdata = scaledTrainData)
+    meanTrainError <- mean((predictTrain - scaledTrainData$Y)^2)
+    predictTest <- predict(model, newdata = scaledTestData)
+    meanTestError <- mean((predictTest - scaledTestData$Y)^2)
+    meanTrainErrorsNN0.01 <- c(meanTrainErrorsNN0.01, meanTrainError)
+    meanTestErrorsNN0.01 <- c(meanTestErrorsNN0.01, meanTestError)
+}
+
+meanTrainErrorsNN0.05 <- c()
+meanTestErrorsNN0.05 <- c()
+for(iter in seq(1,100,5)){
+  model <- nnet(Y~., data = scaledTrainData, decay = 0.05, size = 10, maxit = iter) # 10 hidden units
+  predictTrain <- predict(model, newdata = scaledTrainData)
+  meanTrainError <- mean((predictTrain - scaledTrainData$Y)^2)
+  predictTest <- predict(model, newdata = scaledTestData)
+  meanTestError <- mean((predictTest - scaledTestData$Y)^2)
+  meanTrainErrorsNN0.05 <- c(meanTrainErrorsNN0.05, meanTrainError)
+  meanTestErrorsNN0.05 <- c(meanTestErrorsNN0.05, meanTestError)
+}
+
+meanTrainErrorsNN0.1 <- c()
+meanTestErrorsNN0.1 <- c()
+for(iter in seq(1,100,5)){
+  model <- nnet(Y~., data = scaledTrainData, decay = 0.1, size = 10, maxit = iter) # 10 hidden units
+  predictTrain <- predict(model, newdata = scaledTrainData)
+  meanTrainError <- mean((predictTrain - scaledTrainData$Y)^2)
+  predictTest <- predict(model, newdata = scaledTestData)
+  meanTestError <- mean((predictTest - scaledTestData$Y)^2)
+  meanTrainErrorsNN0.1 <- c(meanTrainErrorsNN0.1, meanTrainError)
+  meanTestErrorsNN0.1 <- c(meanTestErrorsNN0.1, meanTestError)
+}
+```
+
+```{r Problem 4 Using Package, part 3, messages = FALSE}
+xNN <- seq(1,100,5) # epochs
+plot(xNN,meanTrainErrorsNN0.01, type = 'l', main='Problem 4B, Varying Decay Using Package', xlab = 'Epochs', ylab = 'Error', ylim = c(0,0.1))
+lines(xNN, meanTestErrorsNN0.01, col="gray")
+lines(xNN, meanTrainErrorsNN0.05, col="blue")
+lines(xNN, meanTestErrorsNN0.05, col="light blue")
+lines(xNN, meanTrainErrorsNN0.1, col="red")
+lines(xNN, meanTestErrorsNN0.1, col="pink")
+
+
+legend(60, 0.08, legend=c("0.01, Training", "0.01, Test", "0.05, Training", "0.05, Test", "0.1, Training", "0.1, Test"), col=c("black", "gray", "blue", 'light blue', 'red', 'pink'), lty=c(1,1,1,1,1,1), cex=0.8)
+```
+
+We see potential overfitting when the decay is 0.01 and the number of epochs is low, since the test error is higher compared to higher values of decay. There is no overfitting for higher values of decay.
+
+## Problem 4A and 4B, Without Package
+```{r Problem 4 Using Function From Scratch, messages = FALSE}
+# code based on https://selbydavid.com/2018/01/09/neural-network/ 
+backpropagate <- function(x, y, y_hat, w1, w2, h, learn_rate, lambda) {
+  dw2 <- t(cbind(1, h)) %*% (y_hat - y)
+  dh  <- (y_hat - y) %*% t(w2[-1, , drop = FALSE])
+  z1 <- cbind(1, x) %*% w1
+  h <- sigmoid(z1)
+  dw1 <- t(cbind(1, x)) %*% (d_sigmoid(h) * dh) # derivative with respect to alphas
+  
+  w1 <- w1 - learn_rate * (dw1 + 2*lambda*w1) # last term is penalty term
+  w2 <- w2 - learn_rate * (dw2 + 2*lambda*w2) # last term is penalty term
+  list(w1 = w1, w2 = w2)
+}
+
+feedforward <- function(x, w1, w2) {
+  z1 <- cbind(1, x) %*% w1
+  h <- sigmoid(z1)
+  z2 <- cbind(1, h) %*% w2
+  list(output = sigmoid(z2), h = h)
+}
+
+sigmoid <- function(x) 1 / (1 + exp(-x))
+
+train <- function(x, y, testX, hidden = 10, learn_rate = 1e-2, lambda = 0.01, iterations = 1e4) {
+  d <- ncol(x) + 1
+  w1 <- matrix(rnorm(d * hidden), d, hidden)
+  w2 <- as.matrix(rnorm(hidden + 1))
+  for (i in 1:iterations) {
+    ff <- feedforward(x, w1, w2)
+    bp <- backpropagate(x, y,
+                        y_hat = ff$output,
+                        w1, w2,
+                        h = ff$h,
+                        learn_rate = learn_rate,
+                        lambda = lambda)
+    w1 <- bp$w1; w2 <- bp$w2
+  }
+  # prediction 
+  prediction <- feedforward(testX, w1, w2)
+  list(output = ff$output, w1 = w1, w2 = w2, pred = prediction$output)
+}
+
+x <- scaledTrainNN[,1:2]
+xTest <- scaledTestNN[,1:2]
+yTest <- scaledTestNN[,3]
+y <- scaledTrainNN[,3]
+# for lambda = 0.01
+NNtrainingError0.01 <- c()
+NNtestError0.01 <- c()
+for(epochs in seq(1,2000,50)){
+  nnetModel <- train(as.matrix(x), y, as.matrix(xTest), hidden = 10, lambda = 0.01, iterations = epochs)
+  CurrTrainingError <- mean((y-nnetModel$output)^2)
+  NNtrainingError0.01 <- c(NNtrainingError0.01, CurrTrainingError)
+  CurrTestError <- mean((yTest-nnetModel$pred)^2)
+  NNtestError0.01 <- c(NNtestError0.01, CurrTestError)
+}
+# for lambda = 0.05
+NNtrainingError0.05 <- c()
+NNtestError0.05 <- c()
+for(epochs in seq(1,2000,50)){
+  nnetModel <- train(as.matrix(x), y, as.matrix(xTest), hidden = 10, lambda = 0.05, iterations = epochs)
+  CurrTrainingError <- mean((y-nnetModel$output)^2)
+  NNtrainingError0.05 <- c(NNtrainingError0.05, CurrTrainingError)
+  CurrTestError <- mean((yTest-nnetModel$pred)^2)
+  NNtestError0.05 <- c(NNtestError0.05, CurrTestError)
+}
+# for lambda = 0.1
+NNtrainingError0.1 <- c()
+NNtestError0.1 <- c()
+for(epochs in seq(1,2000,50)){
+  nnetModel <- train(as.matrix(x), y, as.matrix(xTest), hidden = 10, lambda = 0.1, iterations = epochs)
+  CurrTrainingError <- mean((y-nnetModel$output)^2)
+  NNtrainingError0.1 <- c(NNtrainingError0.1, CurrTrainingError)
+  CurrTestError <- mean((yTest-nnetModel$pred)^2)
+  NNtestError0.1 <- c(NNtestError0.1, CurrTestError)
+  
+}
+xAxis <- seq(1,2000,50)
+plot(xAxis,NNtrainingError0.01, xlim = c(0,100), type = 'l', main='Problem 4B, Varying Decay From Scratch', xlab = 'Epochs', ylab = 'Error')
+lines(xAxis, NNtestError0.01, col="gray")
+lines(xAxis, NNtrainingError0.05, col="blue")
+lines(xAxis, NNtestError0.05, col="light blue")
+lines(xAxis, NNtrainingError0.1, col="red")
+lines(xAxis, NNtestError0.1, col="pink")
+
+legend(60, 0.2, legend=c("0.01, Training", "0.01, Test", "0.05, Training", "0.05, Test", "0.1, Training", "0.1, Test"), col=c("black", "gray", "blue", "light blue", 'red', "pink"), lty=c(1,1,1,1,1,1), cex=0.8)
+
+```
+
+When running neural net without the package, I see that the higher decay values result in lower error rates. Specifically, the test error for weight decay = 0.05 is higher than the test error for weight decay = 0.01, which is higher than the test error for weight decay = 0.1. There is not really overfitting.
+
+## Problem 4C
+```{r Problem 4C Using Function From Scratch, messages = FALSE}
+# varying number of hidden units
+
+errors <- c()
+for(units in 1:10){
+  nn <- neuralnet(Y~., data = scaledTrainNN,hidden=10,linear.output=T, threshold = 0.05)
+  preds <- predict(nn, newdata = scaledTestNN)
+  error <- mean((yTest-preds)^2)
+  errors <- c(errors, error)
+}
+errors
+```
+
+At 5 hidden units, the test error gets smaller, so we need a minimum of about 5 hidden units.
